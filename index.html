@@ -32,6 +32,7 @@
         #namePrompt input {
             padding: 10px; font-size: 20px; margin: 15px 0; width: 200px;
             border-radius: 8px; border: none; text-align: center;
+            inputmode: text; autocomplete: off;
         }
         #namePrompt button {
             padding: 10px 25px; font-size: 18px; background: #0e4282;
@@ -73,7 +74,7 @@
     <div>
         <h2>🏆 上传分数</h2>
         <p>请输入你的昵称</p>
-        <input type="text" id="playerName" placeholder="北航学子" maxlength="8">
+        <input type="text" id="playerName" placeholder="北航学子" maxlength="8" inputmode="text" autocomplete="off">
         <br>
         <button id="submitName">确认上传</button>
     </div>
@@ -88,9 +89,9 @@
 
 <script>
 (function() {
-    // ========== 排行榜数据库链接 ==========
-    const LEADERBOARD_URL = 'https://jsonblob.com/api/jsonBlob/019e8318-f8c6-7d8a-a79d-0207ab1f4674';
-    // ====================================
+    // ========== 排行榜数据库链接（已更新）==========
+    const LEADERBOARD_URL = 'https://jsonblob.com/api/jsonBlob/019e832a-5c54-7dfa-81b2-7dfe87da0ef3';
+    // ==============================================
 
     // ---------- 常量 ----------
     const CELL_SIZE = 35;
@@ -393,9 +394,11 @@
         // 弹出上传弹窗
         if(score>0 && !uploadRequested){
             uploadRequested=true;
+            const input = document.getElementById('playerName');
             document.getElementById('namePrompt').style.display='flex';
-            document.getElementById('playerName').value='';
-            document.getElementById('playerName').focus();
+            input.value = '';
+            input.focus();
+            setTimeout(() => input.focus(), 100);
         }
     }
     function drawPause(){ ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE); ctx.fillStyle=WHITE; ctx.font='30px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('暂停中...',CANVAS_SIZE/2,CANVAS_SIZE/2); }
@@ -453,9 +456,14 @@
     // ---------- 联网排名（JSONBlob，无需注册）----------
     async function uploadScore(name, score) {
         try {
-            const getRes = await fetch(LEADERBOARD_URL);
+            const getRes = await fetch(LEADERBOARD_URL, {
+                headers: { 'Accept': 'application/json' }
+            });
             let data = await getRes.json();
-            if (!Array.isArray(data)) data = [];
+            if (!Array.isArray(data)) {
+                if (data && Array.isArray(data.scores)) data = data.scores;
+                else data = [];
+            }
             data.push({ name, score, timestamp: Date.now() });
             data.sort((a, b) => b.score - a.score);
             data = data.slice(0, 10);
@@ -481,9 +489,15 @@
         const rankList = document.getElementById('rankList');
         rankList.innerHTML = '<li style="color:white;">加载中...</li>';
         try {
-            const getRes = await fetch(LEADERBOARD_URL);
+            const getRes = await fetch(LEADERBOARD_URL, {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!getRes.ok) throw new Error(`HTTP ${getRes.status}`);
             let data = await getRes.json();
-            if (!Array.isArray(data)) data = [];
+            if (!Array.isArray(data)) {
+                if (data && Array.isArray(data.scores)) data = data.scores;
+                else data = [];
+            }
             data.sort((a, b) => b.score - a.score);
             rankList.innerHTML = '';
             if (data.length === 0) {
@@ -502,7 +516,8 @@
                 rankList.appendChild(li);
             });
         } catch (e) {
-            rankList.innerHTML = '<li style="color:red;">加载失败</li>';
+            console.error('排行榜加载错误:', e);
+            rankList.innerHTML = `<li style="color:red;">加载失败（${e.message}），请检查网络或数据库链接</li>`;
         }
     }
     document.getElementById('closeLeaderboard').addEventListener('click', () => {
