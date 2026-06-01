@@ -2,990 +2,493 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>北航贪吃蛇 - BUAA Snake</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            margin: 0;
             background: #000;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             height: 100vh;
+            height: 100dvh;
             font-family: 'Microsoft YaHei', 'SimHei', sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
         }
+        #gameContainer { display: flex; flex-direction: column; align-items: center; }
         canvas {
             display: block;
+            max-width: 95vw;
+            max-height: 70vh;
+            max-height: 70dvh;
+            border: 1px solid #333;
+        }
+        #controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 10px;
+            gap: 5px;
+        }
+        .control-row { display: flex; gap: 10px; }
+        .control-btn {
+            width: 60px; height: 60px;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid #6495c8;
+            border-radius: 12px;
+            color: white;
+            font-size: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        .control-btn:active { background: rgba(100,149,200,0.5); }
+        @media (max-width: 600px) {
+            .control-btn { width: 50px; height: 50px; font-size: 24px; }
         }
     </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+<div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="controls">
+        <div class="control-row"><div class="control-btn" data-dir="up">▲</div></div>
+        <div class="control-row">
+            <div class="control-btn" data-dir="left">◀</div>
+            <div class="control-btn" data-dir="down">▼</div>
+            <div class="control-btn" data-dir="right">▶</div>
+        </div>
+    </div>
+</div>
+
 <script>
-    (function() {
-        // ---------- 常量 ----------
-        const CELL_SIZE = 35;
-        const CELL_NUMBER = 25;
-        const CANVAS_SIZE = CELL_SIZE * CELL_NUMBER;  // 875
+(function() {
+    // ---------- 常量 ----------
+    const CELL_SIZE = 35;
+    const CELL_NUMBER = 25;
+    const CANVAS_SIZE = CELL_SIZE * CELL_NUMBER;
+    const FPS = 10;
+    const INIT_SNAKE_LENGTH = 3;
+    const UP = {x:0, y:-1}, DOWN = {x:0, y:1}, LEFT = {x:-1, y:0}, RIGHT = {x:1, y:0};
+    const BUAA_BLUE = '#0e4282', BUAA_LIGHT_BLUE = '#6495c8', WHITE = '#ffffff';
+    const RED = '#dc3232', GREEN = '#32c832', BLACK = '#000000', GRAY = '#808080';
+    const FOOD_COLORS = ['#ff5050','#50b4ff','#50ff78','#ffb43c','#dc78ff','#ffff50','#00dcdc'];
+    const MESSAGES = [
+        '北航1952年创立','中国航天日：4月24日','歼-20代号“威龙”',
+        '北航校训：德才兼备 知行合一','C919大型客机已投入运营',
+        '北航雄安校区正在建设中','北航博物馆藏有“黑寡妇”','月宫一号由北航研制'
+    ];
+    const UNIVERSITIES = [
+        '清华','北大','浙大','上交','复旦','南大','中科大',
+        '哈工大','西交','人大','同济','武大','华科','中山',
+        '东南','天大','南开','川大','电子科大','重大',
+        '大连理工','华南理工','东北','西工大','兰大','厦大',
+        '吉大','山大','中国海洋','中南','湖大','北理',
+        '北师','中国农大','中央民族','国防科大','华东师大','西北农林'
+    ];
+    const POWERUP_TYPES = ['hanggai','shuxue','TD','fengru'];
+    const POWERUP_WEIGHTS = [0.4,0.4,0.15,0.05];
+    const ACHIEVEMENTS_DEF = {
+        '初识北航':'吃到第一个飞机食物',
+        '北航一往无前':'累计吃掉10个大学',
+        '内卷的王':'单局得分达到50分',
+        '进阶航兵':'触发全部8条航空彩蛋',
+        '顶级航兵':'触发全部彩蛋 + 吃过全部道具'
+    };
 
-        const FPS = 10;
-        const INIT_SNAKE_LENGTH = 3;
+    // ---------- Canvas ----------
+    const canvas = document.getElementById('gameCanvas');
+    canvas.width = CANVAS_SIZE; canvas.height = CANVAS_SIZE;
+    const ctx = canvas.getContext('2d');
 
-        // 方向向量
-        const UP = {x: 0, y: -1};
-        const DOWN = {x: 0, y: 1};
-        const LEFT = {x: -1, y: 0};
-        const RIGHT = {x: 1, y: 0};
+    // ---------- 游戏状态 ----------
+    let gameState = 'menu';
+    let menuOptions = ['开始游戏','游戏说明','查看成就','退出游戏'];
+    let menuSelected = 0;
+    let difficultyOptions = ['大一萌新','大二进阶','大三老狗'];
+    let difficultySelected = 1;
+    let difficulty = 'normal';
+    let snake, direction, nextDirection, food;
+    let score, gameOver, paused;
+    let airpowerTriggered, showAirpowerMessage, airpowerTimer, currentMessage;
+    let showAwesome, awesomeTimer;
+    let highScore = 0;
+    let obstacles = [];
+    let currentFps = FPS;
+    let powerup = null, powerupCooldown = 0, powerupDuration = 0;
+    let shield = false, slowTimer = 0, baseFps = FPS;
+    let victory = false;
+    let showPowerupMsg = false, powerupMsgText = '', powerupMsgTimer = 0;
+    let achievements = {};
+    let unlockedCount = 0;
+    let showAchieveMsg = false, achieveMsgText = '', achieveMsgTimer = 0;
+    let eatenAirplane = 0, eatenUni = 0;
+    let triggeredMessages = new Set();
+    let eatenPowerups = new Set();
 
-        // 配色
-        const BUAA_BLUE = '#0e4282';
-        const BUAA_LIGHT_BLUE = '#6495c8';
-        const WHITE = '#ffffff';
-        const RED = '#dc3232';
-        const GREEN = '#32c832';
-        const BLACK = '#000000';
-        const GRAY = '#808080';
+    // ---------- 存储 ----------
+    function loadHighScore() { try { const v = localStorage.getItem('buaa_snake_highscore'); return v ? parseInt(v) : 0; } catch(e) { return 0; } }
+    function saveHighScore(s) { try { localStorage.setItem('buaa_snake_highscore', s.toString()); } catch(e) {} }
 
-        // 飞机颜色
-        const FOOD_COLORS = [
-            '#ff5050', '#50b4ff', '#50ff78',
-            '#ffb43c', '#dc78ff', '#ffff50', '#00dcdc'
-        ];
+    // ---------- 辅助绘图 ----------
+    function drawAirplane(cx, cy, size, color) {
+        const w = size*0.8, h = size*0.6;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.roundRect(cx-w/4, cy-h/2, w/2, h, 4); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(cx-w/2, cy-h/4); ctx.lineTo(cx-w/4, cy-h/4); ctx.lineTo(cx-w/4, cy+h/4); ctx.lineTo(cx-w/2, cy+h/4); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(cx+w/2, cy-h/4); ctx.lineTo(cx+w/4, cy-h/4); ctx.lineTo(cx+w/4, cy+h/4); ctx.lineTo(cx+w/2, cy+h/4); ctx.fill();
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath(); ctx.moveTo(cx-w/4, cy-h/2); ctx.lineTo(cx-w/3, cy-h/2 - size*0.2); ctx.lineTo(cx+w/3, cy-h/2 - size*0.2); ctx.lineTo(cx+w/4, cy-h/2); ctx.fill();
+        ctx.fillStyle = '#c8c8ff'; const wr = size*0.1;
+        ctx.beginPath(); ctx.arc(cx, cy-h/4, wr, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, wr, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy+h/4, wr, 0, Math.PI*2); ctx.fill();
+    }
+    function adjustBrightness(color, amt) {
+        if(!color.startsWith('#')) return color;
+        const r = Math.max(0, Math.min(255, parseInt(color.slice(1,3),16)+amt));
+        const g = Math.max(0, Math.min(255, parseInt(color.slice(3,5),16)+amt));
+        const b = Math.max(0, Math.min(255, parseInt(color.slice(5,7),16)+amt));
+        return `rgb(${r},${g},${b})`;
+    }
+    function drawBook(rect, color) {
+        const [x,y,w,h] = [rect.x, rect.y, rect.w, rect.h];
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.roundRect(x, y, w, h, 4); ctx.fill();
+        ctx.fillStyle = adjustBrightness(color, -60);
+        ctx.fillRect(x, y, w*0.2, h);
+        const bright = (parseInt(color.slice(1,3),16)*0.299 + parseInt(color.slice(3,5),16)*0.587 + parseInt(color.slice(5,7),16)*0.114) > 150;
+        ctx.strokeStyle = bright ? '#000' : '#fff'; ctx.lineWidth = 2;
+        for(let i=0; i<3; i++) {
+            const ly = y + h*0.3 + i*h*0.15;
+            ctx.beginPath(); ctx.moveTo(x+w*0.3, ly); ctx.lineTo(x+w*0.8, ly); ctx.stroke();
+        }
+    }
+    function drawTrophy(rect, color) {
+        const [x,y,w,h] = [rect.x, rect.y, rect.w, rect.h];
+        ctx.fillStyle = '#b49632'; ctx.fillRect(x+w*0.3, y+h*0.75, w*0.4, h*0.2);
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.ellipse(x+w/2, y+h*0.4, w*0.3, h*0.3, 0, 0, Math.PI*2); ctx.fill();
+        const darker = adjustBrightness(color, -30);
+        ctx.fillStyle = darker; ctx.fillRect(x+w*0.05, y+h*0.25, w*0.15, h*0.3); ctx.fillRect(x+w*0.8, y+h*0.25, w*0.15, h*0.3);
+        ctx.strokeStyle = '#ffffc8'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(x+w/2, y+h*0.4, w*0.3-2, h*0.3-2, 0, 0, Math.PI*2); ctx.stroke();
+    }
+    function drawSportBadge(rect, color) {
+        const [x,y,w,h] = [rect.x, rect.y, rect.w, rect.h];
+        const cx = x+w/2, cy = y+h/2, r = Math.min(w,h)/2-2;
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = WHITE; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy-r/3, r/4, 0, Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-r/6); ctx.lineTo(cx, cy+r/4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-r/8); ctx.lineTo(cx-r/3, cy+r/6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy-r/8); ctx.lineTo(cx+r/3, cy+r/6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy+r/4); ctx.lineTo(cx-r/3, cy+r/2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy+r/4); ctx.lineTo(cx+r/3, cy+r/2); ctx.stroke();
+    }
 
-        // 彩蛋消息
-        const MESSAGES = [
-            '北航1952年创立',
-            '中国航天日：4月24日',
-            '歼-20代号“威龙”',
-            '北航校训：德才兼备 知行合一',
-            'C919大型客机已投入运营',
-            '北航雄安校区正在建设中',
-            '北航博物馆藏有“黑寡妇”',
-            '月宫一号由北航研制'
-        ];
-
-        // 985大学简称（排除北航）
-        const UNIVERSITIES = [
-            '清华', '北大', '浙大', '上交', '复旦', '南大', '中科大',
-            '哈工大', '西交', '人大', '同济', '武大', '华科', '中山',
-            '东南', '天大', '南开', '川大', '电子科大', '重大',
-            '大连理工', '华南理工', '东北', '西工大', '兰大', '厦大',
-            '吉大', '山大', '中国海洋', '中南', '湖大', '北理',
-            '北师', '中国农大', '中央民族', '国防科大', '华东师大', '西北农林'
-        ];
-
-        // 道具类型
-        const POWERUP_TYPES = ['hanggai', 'shuxue', 'TD', 'fengru'];
-        const POWERUP_WEIGHTS = [0.4, 0.4, 0.15, 0.05];
-
-        // 成就定义
-        const ACHIEVEMENTS_DEF = {
-            '初识北航': '吃到第一个飞机食物',
-            '北航一往无前': '累计吃掉10个大学',
-            '内卷的王': '单局得分达到50分',
-            '进阶航兵': '触发全部8条航空彩蛋',
-            '顶级航兵': '触发全部彩蛋 + 吃过全部道具',
-        };
-
-        // ---------- Canvas 设置 ----------
-        const canvas = document.getElementById('gameCanvas');
-        canvas.width = CANVAS_SIZE;
-        canvas.height = CANVAS_SIZE;
-        const ctx = canvas.getContext('2d');
-
-        // ---------- 游戏状态 ----------
-        let gameState = 'menu';            // menu, instructions, achievements_view, difficulty_menu, playing
-        let menuOptions = ['开始游戏', '游戏说明', '查看成就', '退出游戏'];
-        let menuSelected = 0;
-        let difficultyOptions = ['大一萌新', '大二进阶', '大三老狗'];
-        let difficultySelected = 1;       // 默认普通
-        let difficulty = 'normal';       // easy, normal, hell
-
-        // 游戏对象
-        let snake, direction, nextDirection, food;
-        let score, gameOver, paused;
-        let airpowerTriggered, showAirpowerMessage, airpowerTimer;
-        let currentMessage;
-        let showAwesome, awesomeTimer;
-        let highScore = 0;
-        let obstacles = [];
-        let currentFps = FPS;
-
-        // 道具
-        let powerup = null;              // {x, y, type}
-        let powerupCooldown = 0;
-        let powerupDuration = 0;
-        let shield = false;
-        let slowTimer = 0;
-        let baseFps = FPS;
-        let victory = false;
-        let showPowerupMsg = false;
-        let powerupMsgText = '';
-        let powerupMsgTimer = 0;
-
-        // 成就
-        let achievements = {};
-        let unlockedCount = 0;
-        let showAchieveMsg = false;
-        let achieveMsgText = '';
-        let achieveMsgTimer = 0;
-        let eatenAirplane = 0;
-        let eatenUni = 0;
-        let triggeredMessages = new Set();
-        let eatenPowerups = new Set();
-
-        // ---------- 本地存储最高分 ----------
-        function loadHighScore() {
-            try {
-                const val = localStorage.getItem('buaa_snake_highscore');
-                return val ? parseInt(val) : 0;
-            } catch (e) {
-                return 0;
+    // ---------- 游戏逻辑 ----------
+    function resetGame() {
+        const startX = Math.floor(CELL_NUMBER/2), startY = Math.floor(CELL_NUMBER/2);
+        snake = [];
+        for(let i=0; i<INIT_SNAKE_LENGTH; i++) snake.push({x:startX+i, y:startY});
+        direction = RIGHT; nextDirection = RIGHT;
+        food = generateFood();
+        score = 0; gameOver = false; paused = false;
+        airpowerTriggered = false; showAirpowerMessage = false; airpowerTimer = 0;
+        showAwesome = false; awesomeTimer = 0; victory = false;
+        if(difficulty === 'easy') currentFps = 8;
+        else if(difficulty === 'normal') currentFps = 10;
+        else currentFps = 12;
+        baseFps = currentFps;
+        obstacles = [];
+        if(difficulty === 'hell') {
+            for(let i=0; i<8; i++) {
+                let placed = false;
+                while(!placed) {
+                    const ox = Math.floor(Math.random()*CELL_NUMBER);
+                    const oy = Math.floor(Math.random()*CELL_NUMBER);
+                    if(!snake.some(s=>s.x===ox&&s.y===oy) && !(food.x===ox&&food.y===oy) && !obstacles.some(o=>o.x===ox&&o.y===oy)) {
+                        obstacles.push({x:ox, y:oy}); placed = true;
+                    }
+                }
             }
         }
-        function saveHighScore(score) {
-            try {
-                localStorage.setItem('buaa_snake_highscore', score.toString());
-            } catch (e) {}
+        powerup = null; powerupCooldown = Math.floor(Math.random()*61)+30; powerupDuration = 0;
+        shield = false; slowTimer = 0; showPowerupMsg = false; powerupMsgTimer = 0;
+        eatenAirplane = 0; eatenUni = 0; triggeredMessages = new Set(); eatenPowerups = new Set();
+        unlockedCount = 0;
+    }
+    function generateFood() {
+        let x, y;
+        do { x = Math.floor(Math.random()*CELL_NUMBER); y = Math.floor(Math.random()*CELL_NUMBER); }
+        while(snake.some(s=>s.x===x && s.y===y));
+        if(Math.random() < 0.5) {
+            const color = FOOD_COLORS[Math.floor(Math.random()*FOOD_COLORS.length)];
+            return {x, y, type:'airplane', data:color};
+        } else {
+            const uni = UNIVERSITIES[Math.floor(Math.random()*UNIVERSITIES.length)];
+            return {x, y, type:'uni', data:uni};
         }
-
-        // ---------- 辅助绘图函数 ----------
-        function drawAirplane(cx, cy, size, color) {
-            const w = size * 0.8, h = size * 0.6;
-            ctx.fillStyle = color;
-            // 机身
-            ctx.beginPath();
-            ctx.roundRect(cx - w/4, cy - h/2, w/2, h, 4);
-            ctx.fill();
-            // 左翼
-            ctx.beginPath();
-            ctx.moveTo(cx - w/2, cy - h/4);
-            ctx.lineTo(cx - w/4, cy - h/4);
-            ctx.lineTo(cx - w/4, cy + h/4);
-            ctx.lineTo(cx - w/2, cy + h/4);
-            ctx.fill();
-            // 右翼
-            ctx.beginPath();
-            ctx.moveTo(cx + w/2, cy - h/4);
-            ctx.lineTo(cx + w/4, cy - h/4);
-            ctx.lineTo(cx + w/4, cy + h/4);
-            ctx.lineTo(cx + w/2, cy + h/4);
-            ctx.fill();
-            // 尾翼（黄色）
-            ctx.fillStyle = '#ffff00';
-            ctx.beginPath();
-            ctx.moveTo(cx - w/4, cy - h/2);
-            ctx.lineTo(cx - w/3, cy - h/2 - size*0.2);
-            ctx.lineTo(cx + w/3, cy - h/2 - size*0.2);
-            ctx.lineTo(cx + w/4, cy - h/2);
-            ctx.fill();
-            // 窗户
-            ctx.fillStyle = '#c8c8ff';
-            const wr = size * 0.1;
-            ctx.beginPath(); ctx.arc(cx, cy - h/4, wr, 0, Math.PI*2); ctx.fill();
-            ctx.beginPath(); ctx.arc(cx, cy, wr, 0, Math.PI*2); ctx.fill();
-            ctx.beginPath(); ctx.arc(cx, cy + h/4, wr, 0, Math.PI*2); ctx.fill();
-        }
-
-        function drawBook(rect, color) {
-            const [x, y, w, h] = [rect.x, rect.y, rect.w, rect.h];
-            // 封面
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.roundRect(x, y, w, h, 4);
-            ctx.fill();
-            // 书脊
-            const darker = adjustBrightness(color, -60);
-            ctx.fillStyle = darker;
-            ctx.fillRect(x, y, w * 0.2, h);
-            // 横线
-            const lineColor = isBright(color) ? BLACK : WHITE;
-            ctx.strokeStyle = lineColor;
-            ctx.lineWidth = 2;
-            for (let i = 0; i < 3; i++) {
-                const ly = y + h * 0.3 + i * h * 0.15;
-                ctx.beginPath();
-                ctx.moveTo(x + w*0.3, ly);
-                ctx.lineTo(x + w*0.8, ly);
-                ctx.stroke();
+    }
+    function spawnPowerup() {
+        const totalWeight = POWERUP_WEIGHTS.reduce((a,b)=>a+b);
+        let r = Math.random()*totalWeight, idx = 0;
+        for(let i=0; i<POWERUP_WEIGHTS.length; i++) { r -= POWERUP_WEIGHTS[i]; if(r <= 0) { idx = i; break; } }
+        const type = POWERUP_TYPES[idx];
+        let placed = false;
+        while(!placed) {
+            const x = Math.floor(Math.random()*CELL_NUMBER);
+            const y = Math.floor(Math.random()*CELL_NUMBER);
+            if(!snake.some(s=>s.x===x&&s.y===y) && !(food.x===x&&food.y===y) && !obstacles.some(o=>o.x===x&&o.y===oy) && (!powerup || (powerup.x!==x || powerup.y!==y))) {
+                powerup = {x, y, type}; powerupDuration = 100; placed = true;
             }
         }
-
-        function drawTrophy(rect, color) {
-            const [x, y, w, h] = [rect.x, rect.y, rect.w, rect.h];
-            // 底座
-            ctx.fillStyle = '#b49632';
-            ctx.fillRect(x + w*0.3, y + h*0.75, w*0.4, h*0.2);
-            // 杯身
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.ellipse(x + w/2, y + h*0.4, w*0.3, h*0.3, 0, 0, Math.PI*2);
-            ctx.fill();
-            // 把手
-            const darker = adjustBrightness(color, -30);
-            ctx.fillStyle = darker;
-            ctx.fillRect(x + w*0.05, y + h*0.25, w*0.15, h*0.3);
-            ctx.fillRect(x + w*0.8, y + h*0.25, w*0.15, h*0.3);
-            // 高亮
-            ctx.strokeStyle = '#ffffc8';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.ellipse(x + w/2, y + h*0.4, w*0.3 - 2, h*0.3 - 2, 0, 0, Math.PI*2);
-            ctx.stroke();
+    }
+    function applyPowerup(ptype) {
+        eatenPowerups.add(ptype);
+        let msg = '';
+        if(ptype === 'hanggai') { score += 3; msg = '航概学习：知识增加了！'; }
+        else if(ptype === 'shuxue') { slowTimer = 5*FPS; currentFps = Math.max(3, Math.floor(baseFps/2)); msg = '数学分析：大脑燃尽了！'; }
+        else if(ptype === 'TD') { shield = true; msg = 'TD线打卡：体质增强了！'; }
+        else if(ptype === 'fengru') { victory = true; gameOver = true; if(score>highScore){ highScore=score; saveHighScore(highScore); } msg = '冯如杯一等奖：保研成功！'; }
+        showPowerupMsg = true; powerupMsgText = msg; powerupMsgTimer = 40;
+    }
+    function update() {
+        if(gameState !== 'playing' || gameOver || paused) return;
+        if(slowTimer > 0) { slowTimer--; if(slowTimer<=0) currentFps = baseFps; }
+        else currentFps = baseFps;
+        if(powerup) { powerupDuration--; if(powerupDuration<=0) powerup = null; }
+        else { powerupCooldown--; if(powerupCooldown<=0) { spawnPowerup(); powerupCooldown = Math.floor(Math.random()*91)+60; } }
+        if(showPowerupMsg) { powerupMsgTimer--; if(powerupMsgTimer<=0) showPowerupMsg = false; }
+        direction = nextDirection;
+        const head = snake[snake.length-1];
+        const newHead = {x: head.x+direction.x, y: head.y+direction.y};
+        if(newHead.x<0 || newHead.x>=CELL_NUMBER || newHead.y<0 || newHead.y>=CELL_NUMBER) {
+            if(shield) { shield = false; snake.pop(); }
+            else { gameOver = true; if(score>highScore){ highScore=score; saveHighScore(highScore); } }
+            return;
         }
-
-        function drawSportBadge(rect, color) {
-            const [x, y, w, h] = [rect.x, rect.y, rect.w, rect.h];
-            const cx = x + w/2, cy = y + h/2;
-            const r = Math.min(w, h)/2 - 2;
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI*2);
-            ctx.fill();
-            // 小人
-            ctx.strokeStyle = WHITE;
-            ctx.lineWidth = 2;
-            const headR = r/4;
-            ctx.beginPath();
-            ctx.arc(cx, cy - r/3, headR, 0, Math.PI*2);
-            ctx.stroke();
-            // 身体
-            ctx.beginPath();
-            ctx.moveTo(cx, cy - r/6);
-            ctx.lineTo(cx, cy + r/4);
-            ctx.stroke();
-            // 手臂
-            ctx.beginPath();
-            ctx.moveTo(cx, cy - r/8);
-            ctx.lineTo(cx - r/3, cy + r/6);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(cx, cy - r/8);
-            ctx.lineTo(cx + r/3, cy + r/6);
-            ctx.stroke();
-            // 腿
-            ctx.beginPath();
-            ctx.moveTo(cx, cy + r/4);
-            ctx.lineTo(cx - r/3, cy + r/2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(cx, cy + r/4);
-            ctx.lineTo(cx + r/3, cy + r/2);
-            ctx.stroke();
-        }
-
-        // 辅助：调整亮度
-        function adjustBrightness(color, amount) {
-            let r, g, b;
-            if (color.startsWith('#')) {
-                const hex = color.slice(1);
-                r = parseInt(hex.substring(0,2), 16);
-                g = parseInt(hex.substring(2,4), 16);
-                b = parseInt(hex.substring(4,6), 16);
-            } else { return color; }
-            r = Math.max(0, Math.min(255, r + amount));
-            g = Math.max(0, Math.min(255, g + amount));
-            b = Math.max(0, Math.min(255, b + amount));
-            return `rgb(${r},${g},${b})`;
-        }
-        function isBright(color) {
-            if (color.startsWith('#')) {
-                const hex = color.slice(1);
-                const r = parseInt(hex.substring(0,2), 16);
-                const g = parseInt(hex.substring(2,4), 16);
-                const b = parseInt(hex.substring(4,6), 16);
-                return (r*0.299 + g*0.587 + b*0.114) > 150;
+        for(let obs of obstacles) {
+            if(newHead.x===obs.x && newHead.y===obs.y) {
+                if(shield) { shield = false; snake.pop(); }
+                else { gameOver = true; if(score>highScore){ highScore=score; saveHighScore(highScore); } }
+                return;
             }
-            return true;
         }
-
-        // ---------- 游戏逻辑 ----------
-        function resetGame() {
-            const startX = Math.floor(CELL_NUMBER / 2);
-            const startY = Math.floor(CELL_NUMBER / 2);
-            snake = [];
-            for (let i = 0; i < INIT_SNAKE_LENGTH; i++) {
-                snake.push({x: startX + i, y: startY});
-            }
-            direction = RIGHT;
-            nextDirection = RIGHT;
+        if(snake.some(s=>s.x===newHead.x && s.y===newHead.y)) {
+            if(shield) { shield = false; snake.pop(); }
+            else { gameOver = true; if(score>highScore){ highScore=score; saveHighScore(highScore); } }
+            return;
+        }
+        snake.push(newHead);
+        if(powerup && newHead.x===powerup.x && newHead.y===powerup.y) { applyPowerup(powerup.type); powerup=null; powerupCooldown=Math.floor(Math.random()*91)+60; }
+        if(newHead.x===food.x && newHead.y===food.y) {
+            score++;
+            if(food.type==='airplane') eatenAirplane++; else eatenUni++;
+            if(food.type==='uni') { showAwesome=true; awesomeTimer=30; }
             food = generateFood();
-            score = 0;
-            gameOver = false;
-            paused = false;
-            airpowerTriggered = false;
-            showAirpowerMessage = false;
-            airpowerTimer = 0;
-            currentMessage = '';
-            showAwesome = false;
-            awesomeTimer = 0;
-            victory = false;
-
-            // 难度设置
-            if (difficulty === 'easy') currentFps = 8;
-            else if (difficulty === 'normal') currentFps = 10;
-            else if (difficulty === 'hell') currentFps = 12;
-            baseFps = currentFps;
-
-            // 障碍物
-            obstacles = [];
-            if (difficulty === 'hell') {
-                const num = 8;
-                for (let i = 0; i < num; i++) {
-                    let placed = false;
-                    while (!placed) {
-                        const ox = Math.floor(Math.random() * CELL_NUMBER);
-                        const oy = Math.floor(Math.random() * CELL_NUMBER);
-                        if (!snake.some(s => s.x === ox && s.y === oy) &&
-                            !(food.x === ox && food.y === oy) &&
-                            !obstacles.some(o => o.x === ox && o.y === oy)) {
-                            obstacles.push({x: ox, y: oy});
-                            placed = true;
-                        }
-                    }
-                }
+            if(score%5===0 && !airpowerTriggered) {
+                airpowerTriggered = true; showAirpowerMessage = true; airpowerTimer = 30;
+                currentMessage = MESSAGES[Math.floor(Math.random()*MESSAGES.length)];
+                triggeredMessages.add(currentMessage);
             }
+        } else { snake.shift(); }
+        if(showAirpowerMessage) { airpowerTimer--; if(airpowerTimer<=0) { showAirpowerMessage=false; airpowerTriggered=false; } }
+        if(showAwesome) { awesomeTimer--; if(awesomeTimer<=0) showAwesome=false; }
+        if(showAchieveMsg) { achieveMsgTimer--; if(achieveMsgTimer<=0) showAchieveMsg=false; }
+        checkAchievements();
+    }
+    function checkAchievements() {
+        if(!achievements['初识北航'] && eatenAirplane>=1) unlockAchievement('初识北航');
+        if(!achievements['北航一往无前'] && eatenUni>=10) unlockAchievement('北航一往无前');
+        if(!achievements['内卷的王'] && score>=50) unlockAchievement('内卷的王');
+        if(!achievements['进阶航兵'] && triggeredMessages.size>=MESSAGES.length) unlockAchievement('进阶航兵');
+        if(!achievements['顶级航兵'] && triggeredMessages.size>=MESSAGES.length && POWERUP_TYPES.every(t=>eatenPowerups.has(t))) unlockAchievement('顶级航兵');
+    }
+    function unlockAchievement(name) {
+        if(achievements[name]) return;
+        achievements[name] = true; unlockedCount++;
+        showAchieveMsg = true; achieveMsgText = `成就解锁：${name}`; achieveMsgTimer = 10;
+    }
 
-            // 重置道具
-            powerup = null;
-            powerupCooldown = Math.floor(Math.random() * 61) + 30; // 30-90
-            powerupDuration = 0;
-            shield = false;
-            slowTimer = 0;
-            showPowerupMsg = false;
-            powerupMsgTimer = 0;
-
-            // 重置本局统计
-            eatenAirplane = 0;
-            eatenUni = 0;
-            triggeredMessages = new Set();
-            eatenPowerups = new Set();
-            // 成就解锁状态不清空，但本局解锁计数归零
-            unlockedCount = 0;
+    // ---------- 绘制函数 ----------
+    function drawGrid() { ctx.strokeStyle=GRAY; ctx.lineWidth=0.5; for(let i=0;i<=CELL_NUMBER;i++){ ctx.beginPath(); ctx.moveTo(i*CELL_SIZE,0); ctx.lineTo(i*CELL_SIZE,CANVAS_SIZE); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,i*CELL_SIZE); ctx.lineTo(CANVAS_SIZE,i*CELL_SIZE); ctx.stroke(); } }
+    function drawObstacles() { for(let obs of obstacles){ ctx.fillStyle=GRAY; ctx.beginPath(); ctx.roundRect(obs.x*CELL_SIZE+2, obs.y*CELL_SIZE+2, CELL_SIZE-4, CELL_SIZE-4, 3); ctx.fill(); } }
+    function drawPowerupItem() {
+        if(!powerup) return;
+        const {x,y,type} = powerup;
+        const rect = {x: x*CELL_SIZE+2, y: y*CELL_SIZE+2, w: CELL_SIZE-4, h: CELL_SIZE-4};
+        ctx.save();
+        if(type==='hanggai'){ drawBook(rect,'#0064ff'); ctx.fillStyle=WHITE; ctx.font='14px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('航概',rect.x+rect.w/2, rect.y+rect.h+18); }
+        else if(type==='shuxue'){ drawBook(rect,'#ffd700'); ctx.fillStyle=BLACK; ctx.font='14px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('数分',rect.x+rect.w/2, rect.y+rect.h+18); }
+        else if(type==='TD'){ drawSportBadge(rect,'#00c864'); ctx.fillStyle=WHITE; ctx.font='14px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('TD',rect.x+rect.w/2, rect.y+rect.h+18); }
+        else if(type==='fengru'){ drawTrophy(rect,'#ffd700'); ctx.fillStyle=WHITE; ctx.font='14px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('冯如杯',rect.x+rect.w/2, rect.y+rect.h+18); }
+        ctx.restore();
+    }
+    function drawSnake() {
+        snake.forEach((seg,i)=>{
+            const rx = seg.x*CELL_SIZE+2, ry = seg.y*CELL_SIZE+2, rw = CELL_SIZE-4, rh = CELL_SIZE-4;
+            const isHead = i===snake.length-1;
+            ctx.fillStyle = isHead ? BUAA_LIGHT_BLUE : BUAA_BLUE;
+            ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, 5); ctx.fill();
+            if(isHead){ ctx.strokeStyle=WHITE; ctx.lineWidth=2; ctx.stroke(); }
+            if(i%2===0){ ctx.fillStyle=WHITE; ctx.beginPath(); ctx.arc(seg.x*CELL_SIZE+CELL_SIZE/2, seg.y*CELL_SIZE+CELL_SIZE/2, 2, 0, Math.PI*2); ctx.fill(); }
+        });
+    }
+    function drawFoodItem() {
+        const {x,y,type,data} = food;
+        const cx = x*CELL_SIZE+CELL_SIZE/2, cy = y*CELL_SIZE+CELL_SIZE/2;
+        if(type==='airplane') drawAirplane(cx, cy, CELL_SIZE, data);
+        else { ctx.fillStyle=BUAA_BLUE; ctx.fillRect(x*CELL_SIZE, y*CELL_SIZE, CELL_SIZE, CELL_SIZE); ctx.fillStyle=WHITE; ctx.font='bold 20px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(data, cx, cy); }
+    }
+    function drawScore() {
+        ctx.fillStyle=WHITE; ctx.font='20px "Microsoft YaHei"'; ctx.textAlign='left';
+        ctx.fillText(`得分: ${score}`, 10, 30);
+        ctx.fillStyle='#ffd700'; ctx.fillText(`最高分: ${highScore}`, 10, 60);
+        ctx.textAlign='right'; ctx.fillStyle=WHITE; ctx.fillText('德才兼备 知行合一', CANVAS_SIZE-20, 30);
+    }
+    function drawMessages() {
+        if(showAirpowerMessage){ const msg=currentMessage; ctx.font='18px "Microsoft YaHei"'; const tw=ctx.measureText(msg).width; ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.beginPath(); ctx.roundRect(CANVAS_SIZE/2-tw/2-10, CANVAS_SIZE/2-50, tw+20,30,8); ctx.fill(); ctx.fillStyle='#ffff00'; ctx.textAlign='center'; ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE/2-35); }
+        if(showAwesome){ const msg='北航牛逼！'; ctx.font='bold 20px "Microsoft YaHei"'; const tw=ctx.measureText(msg).width; ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.beginPath(); ctx.roundRect(CANVAS_SIZE/2-tw/2-10, CANVAS_SIZE-50, tw+20,30,8); ctx.fill(); ctx.fillStyle='#ffff00'; ctx.textAlign='center'; ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE-35); }
+        if(showPowerupMsg){ const msg=powerupMsgText; ctx.font='18px "Microsoft YaHei"'; const tw=ctx.measureText(msg).width; ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.beginPath(); ctx.roundRect(CANVAS_SIZE/2-tw/2-10, CANVAS_SIZE-90, tw+20,30,8); ctx.fill(); ctx.fillStyle='#ffff00'; ctx.textAlign='center'; ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE-75); }
+        if(showAchieveMsg){ const msg=achieveMsgText; ctx.font='18px "Microsoft YaHei"'; const tw=ctx.measureText(msg).width; ctx.fillStyle='rgba(0,0,0,0.8)'; ctx.beginPath(); ctx.roundRect(CANVAS_SIZE/2-tw/2-10, CANVAS_SIZE-130, tw+20,30,8); ctx.fill(); ctx.fillStyle='#ffd700'; ctx.textAlign='center'; ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE-115); }
+    }
+    function drawGameOverScreen() {
+        ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        const title = victory ? '保研成功！' : '游戏结束';
+        ctx.fillStyle = victory ? '#ffd700' : WHITE; ctx.font='30px "Microsoft YaHei"'; ctx.textAlign='center';
+        ctx.fillText(title, CANVAS_SIZE/2, CANVAS_SIZE/2-40);
+        ctx.font='18px "Microsoft YaHei"'; ctx.fillText('按空格键重新开始', CANVAS_SIZE/2, CANVAS_SIZE/2);
+        let statY = CANVAS_SIZE/2+40;
+        const stats = [`吃掉飞机：${eatenAirplane} 个`,`吃掉大学：${eatenUni} 个`,`触发彩蛋：${triggeredMessages.size} 条`,`拾取道具：${eatenPowerups.size} 种`];
+        ctx.font='16px "Microsoft YaHei"'; ctx.fillStyle=WHITE;
+        stats.forEach(line=>{ ctx.fillText(line, CANVAS_SIZE/2, statY); statY+=25; });
+        if(unlockedCount>0){ statY+=10; const achList=Object.keys(ACHIEVEMENTS_DEF).filter(name=>achievements[name]); ctx.fillStyle='#ffd700'; achList.forEach(name=>{ ctx.fillText(`🏆 ${name}`, CANVAS_SIZE/2, statY); statY+=25; }); }
+    }
+    function drawPause() { ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE); ctx.fillStyle=WHITE; ctx.font='30px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('暂停中...', CANVAS_SIZE/2, CANVAS_SIZE/2); }
+    function drawMenu() {
+        ctx.fillStyle=BLACK; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.fillStyle=BUAA_LIGHT_BLUE; ctx.font='36px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('北航贪吃蛇', CANVAS_SIZE/2, 150);
+        ctx.fillStyle=WHITE; ctx.font='24px "Microsoft YaHei"'; ctx.fillText('BUAA Snake', CANVAS_SIZE/2, 200);
+        menuOptions.forEach((opt,i)=>{ const color=i===menuSelected?'#ffff00':WHITE; const prefix=i===menuSelected?'> ':'  '; ctx.fillStyle=color; ctx.fillText(prefix+opt, CANVAS_SIZE/2, 350+i*60); });
+        ctx.fillStyle=GRAY; ctx.font='18px "Microsoft YaHei"'; ctx.fillText('↑↓ 选择  回车确认', CANVAS_SIZE/2, CANVAS_SIZE-80);
+        ctx.fillStyle='#ffd700'; ctx.fillText(`最高分: ${highScore}`, CANVAS_SIZE/2, CANVAS_SIZE-130);
+    }
+    function drawInstructions() {
+        ctx.fillStyle=BLACK; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        const lines = ['操作说明：','方向键或WASD - 控制蛇移动','P键 - 暂停/继续','ESC - 返回主菜单','','食物：彩色小飞机 + 大学简称','道具：航概(蓝书) 数分(黄书) TD(绿标) 冯如杯(金杯)','每吃5个食物触发航空彩蛋','撞墙/自身/障碍物则游戏结束'];
+        ctx.fillStyle=WHITE; ctx.font='18px "Microsoft YaHei"'; ctx.textAlign='left';
+        lines.forEach((line,i)=>{ ctx.fillText(line, 100, 100+i*35); });
+        ctx.fillStyle=GRAY; ctx.textAlign='center'; ctx.fillText('按 ESC 返回菜单', CANVAS_SIZE/2, CANVAS_SIZE-60);
+    }
+    function drawAchievementsView() {
+        ctx.fillStyle=BLACK; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.fillStyle=BUAA_LIGHT_BLUE; ctx.font='30px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('成就列表', CANVAS_SIZE/2, 80);
+        let y = 150;
+        for(let name in ACHIEVEMENTS_DEF) {
+            const unlocked = achievements[name] || false;
+            const status = unlocked ? '已解锁' : '未解锁';
+            ctx.fillStyle = unlocked ? '#ffd700' : GRAY;
+            ctx.font='20px "Microsoft YaHei"'; ctx.textAlign='left'; ctx.fillText(`${name}  -  ${status}`, 100, y);
+            ctx.fillStyle=WHITE; ctx.font='16px "Microsoft YaHei"'; ctx.fillText(ACHIEVEMENTS_DEF[name], 120, y+25);
+            y += 60;
         }
+        ctx.fillStyle=GRAY; ctx.font='18px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('按 ESC 返回菜单', CANVAS_SIZE/2, CANVAS_SIZE-60);
+    }
+    function drawDifficultyMenu() {
+        ctx.fillStyle=BLACK; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        ctx.fillStyle=BUAA_LIGHT_BLUE; ctx.font='30px "Microsoft YaHei"'; ctx.textAlign='center'; ctx.fillText('选择难度', CANVAS_SIZE/2, 150);
+        difficultyOptions.forEach((opt,i)=>{ const color=i===difficultySelected?'#ffff00':WHITE; const prefix=i===difficultySelected?'> ':'  '; ctx.fillStyle=color; ctx.font='24px "Microsoft YaHei"'; ctx.fillText(prefix+opt, CANVAS_SIZE/2, 300+i*60); });
+        ctx.fillStyle=GRAY; ctx.font='18px "Microsoft YaHei"'; ctx.fillText('↑↓ 选择  回车确认  ESC返回', CANVAS_SIZE/2, CANVAS_SIZE-80);
+    }
 
-        function generateFood() {
-            let x, y;
-            do {
-                x = Math.floor(Math.random() * CELL_NUMBER);
-                y = Math.floor(Math.random() * CELL_NUMBER);
-            } while (snake.some(s => s.x === x && s.y === y));
-            if (Math.random() < 0.5) {
-                const color = FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)];
-                return {x, y, type: 'airplane', data: color};
-            } else {
-                const uni = UNIVERSITIES[Math.floor(Math.random() * UNIVERSITIES.length)];
-                return {x, y, type: 'uni', data: uni};
-            }
+    function render() {
+        ctx.clearRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+        if(gameState==='menu') drawMenu();
+        else if(gameState==='instructions') drawInstructions();
+        else if(gameState==='achievements_view') drawAchievementsView();
+        else if(gameState==='difficulty_menu') drawDifficultyMenu();
+        else if(gameState==='playing') {
+            ctx.fillStyle=BLACK; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+            drawGrid(); drawObstacles(); drawPowerupItem(); drawSnake(); drawFoodItem();
+            drawScore(); drawMessages();
+            if(paused) drawPause();
+            if(gameOver) drawGameOverScreen();
         }
+    }
 
-        function spawnPowerup() {
-            const idx = weightedRandom(POWERUP_WEIGHTS);
-            const type = POWERUP_TYPES[idx];
-            let placed = false;
-            while (!placed) {
-                const x = Math.floor(Math.random() * CELL_NUMBER);
-                const y = Math.floor(Math.random() * CELL_NUMBER);
-                if (!snake.some(s => s.x === x && s.y === y) &&
-                    !(food.x === x && food.y === y) &&
-                    !obstacles.some(o => o.x === x && o.y === oy) &&
-                    (!powerup || (powerup.x !== x || powerup.y !== y))) {
-                    powerup = {x, y, type};
-                    powerupDuration = 100; // 10秒
-                    placed = true;
-                }
-            }
-        }
-
-        function weightedRandom(weights) {
-            const total = weights.reduce((a,b) => a+b);
-            let r = Math.random() * total;
-            for (let i = 0; i < weights.length; i++) {
-                r -= weights[i];
-                if (r <= 0) return i;
-            }
-            return weights.length - 1;
-        }
-
-        function applyPowerup(ptype) {
-            eatenPowerups.add(ptype);
-            let msg = '';
-            if (ptype === 'hanggai') {
-                score += 3;
-                msg = '航概学习：知识增加了！';
-            } else if (ptype === 'shuxue') {
-                slowTimer = 5 * FPS; // 5秒
-                currentFps = Math.max(3, Math.floor(baseFps / 2));
-                msg = '数学分析：大脑燃尽了！';
-            } else if (ptype === 'TD') {
-                shield = true;
-                msg = 'TD线打卡：体质增强了！';
-            } else if (ptype === 'fengru') {
-                victory = true;
-                gameOver = true;
-                if (score > highScore) {
-                    highScore = score;
-                    saveHighScore(highScore);
-                }
-                msg = '冯如杯一等奖：保研成功！';
-            }
-            showPowerupMsg = true;
-            powerupMsgText = msg;
-            powerupMsgTimer = 40; // 4秒
-        }
-
-        function update() {
-            if (gameState !== 'playing' || gameOver || paused) return;
-
-            // 减速计时
-            if (slowTimer > 0) {
-                slowTimer--;
-                if (slowTimer <= 0) currentFps = baseFps;
-            } else {
-                currentFps = baseFps;
-            }
-
-            // 道具存在计时
-            if (powerup) {
-                powerupDuration--;
-                if (powerupDuration <= 0) powerup = null;
-            } else {
-                powerupCooldown--;
-                if (powerupCooldown <= 0) {
-                    spawnPowerup();
-                    powerupCooldown = Math.floor(Math.random() * 91) + 60; // 60-150
-                }
-            }
-
-            // 道具消息计时
-            if (showPowerupMsg) {
-                powerupMsgTimer--;
-                if (powerupMsgTimer <= 0) showPowerupMsg = false;
-            }
-
-            // 移动
-            direction = nextDirection;
-            const head = snake[snake.length - 1];
-            const newHead = {x: head.x + direction.x, y: head.y + direction.y};
-
-            // 墙壁碰撞
-            if (newHead.x < 0 || newHead.x >= CELL_NUMBER || newHead.y < 0 || newHead.y >= CELL_NUMBER) {
-                if (shield) {
-                    shield = false;
-                    snake.pop();
-                } else {
-                    gameOver = true;
-                    if (score > highScore) { highScore = score; saveHighScore(highScore); }
-                }
-                return;
-            }
-            // 障碍物碰撞
-            for (let obs of obstacles) {
-                if (newHead.x === obs.x && newHead.y === obs.y) {
-                    if (shield) {
-                        shield = false;
-                        snake.pop();
-                    } else {
-                        gameOver = true;
-                        if (score > highScore) { highScore = score; saveHighScore(highScore); }
-                    }
-                    return;
-                }
-            }
-            // 自身碰撞
-            if (snake.some(s => s.x === newHead.x && s.y === newHead.y)) {
-                if (shield) {
-                    shield = false;
-                    snake.pop();
-                } else {
-                    gameOver = true;
-                    if (score > highScore) { highScore = score; saveHighScore(highScore); }
-                }
-                return;
-            }
-
-            snake.push(newHead);
-
-            // 吃道具
-            if (powerup && newHead.x === powerup.x && newHead.y === powerup.y) {
-                applyPowerup(powerup.type);
-                powerup = null;
-                powerupCooldown = Math.floor(Math.random() * 91) + 60;
-            }
-
-            // 吃食物
-            if (newHead.x === food.x && newHead.y === food.y) {
-                score++;
-                if (food.type === 'airplane') eatenAirplane++;
-                else eatenUni++;
-                if (food.type === 'uni') {
-                    showAwesome = true;
-                    awesomeTimer = 30;
-                }
-                food = generateFood();
-
-                if (score % 5 === 0 && !airpowerTriggered) {
-                    airpowerTriggered = true;
-                    showAirpowerMessage = true;
-                    airpowerTimer = 30;
-                    currentMessage = MESSAGES[Math.floor(Math.random() * MESSAGES.length)];
-                    triggeredMessages.add(currentMessage);
-                }
-            } else {
-                snake.shift();
-            }
-
-            // 彩蛋计时
-            if (showAirpowerMessage) {
-                airpowerTimer--;
-                if (airpowerTimer <= 0) {
-                    showAirpowerMessage = false;
-                    airpowerTriggered = false;
-                }
-            }
-            if (showAwesome) {
-                awesomeTimer--;
-                if (awesomeTimer <= 0) showAwesome = false;
-            }
-
-            // 成就消息计时
-            if (showAchieveMsg) {
-                achieveMsgTimer--;
-                if (achieveMsgTimer <= 0) showAchieveMsg = false;
-            }
-
-            // 检查成就
-            checkAchievements();
-        }
-
-        function checkAchievements() {
-            if (!achievements['初识北航'] && eatenAirplane >= 1) unlockAchievement('初识北航');
-            if (!achievements['北航一往无前'] && eatenUni >= 10) unlockAchievement('北航一往无前');
-            if (!achievements['内卷的王'] && score >= 50) unlockAchievement('内卷的王');
-            if (!achievements['进阶航兵'] && triggeredMessages.size >= MESSAGES.length) unlockAchievement('进阶航兵');
-            if (!achievements['顶级航兵'] &&
-                triggeredMessages.size >= MESSAGES.length &&
-                POWERUP_TYPES.every(t => eatenPowerups.has(t))) {
-                unlockAchievement('顶级航兵');
-            }
-        }
-
-        function unlockAchievement(name) {
-            if (achievements[name]) return;
-            achievements[name] = true;
-            unlockedCount++;
-            showAchieveMsg = true;
-            achieveMsgText = `成就解锁：${name}`;
-            achieveMsgTimer = 10; // 1秒
-        }
-
-        // ---------- 绘制函数 ----------
-        function drawGrid() {
-            ctx.strokeStyle = GRAY;
-            ctx.lineWidth = 0.5;
-            for (let i = 0; i <= CELL_NUMBER; i++) {
-                ctx.beginPath();
-                ctx.moveTo(i * CELL_SIZE, 0);
-                ctx.lineTo(i * CELL_SIZE, CANVAS_SIZE);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(0, i * CELL_SIZE);
-                ctx.lineTo(CANVAS_SIZE, i * CELL_SIZE);
-                ctx.stroke();
-            }
-        }
-
-        function drawObstacles() {
-            for (let obs of obstacles) {
-                const rect = [obs.x * CELL_SIZE + 2, obs.y * CELL_SIZE + 2, CELL_SIZE - 4, CELL_SIZE - 4];
-                ctx.fillStyle = GRAY;
-                ctx.beginPath();
-                ctx.roundRect(...rect, 3);
-                ctx.fill();
-            }
-        }
-
-        function drawPowerupItem() {
-            if (!powerup) return;
-            const {x, y, type} = powerup;
-            const rect = {x: x * CELL_SIZE + 2, y: y * CELL_SIZE + 2, w: CELL_SIZE - 4, h: CELL_SIZE - 4};
-            ctx.save();
-            if (type === 'hanggai') {
-                drawBook(rect, '#0064ff');
-                ctx.fillStyle = WHITE;
-                ctx.font = '14px "Microsoft YaHei"';
-                ctx.textAlign = 'center';
-                ctx.fillText('航概', rect.x + rect.w/2, rect.y + rect.h + 18);
-            } else if (type === 'shuxue') {
-                drawBook(rect, '#ffd700');
-                ctx.fillStyle = BLACK;
-                ctx.font = '14px "Microsoft YaHei"';
-                ctx.textAlign = 'center';
-                ctx.fillText('数分', rect.x + rect.w/2, rect.y + rect.h + 18);
-            } else if (type === 'TD') {
-                drawSportBadge(rect, '#00c864');
-                ctx.fillStyle = WHITE;
-                ctx.font = '14px "Microsoft YaHei"';
-                ctx.textAlign = 'center';
-                ctx.fillText('TD', rect.x + rect.w/2, rect.y + rect.h + 18);
-            } else if (type === 'fengru') {
-                drawTrophy(rect, '#ffd700');
-                ctx.fillStyle = WHITE;
-                ctx.font = '14px "Microsoft YaHei"';
-                ctx.textAlign = 'center';
-                ctx.fillText('冯如杯', rect.x + rect.w/2, rect.y + rect.h + 18);
-            }
-            ctx.restore();
-        }
-
-        function drawSnake() {
-            snake.forEach((seg, i) => {
-                const rectX = seg.x * CELL_SIZE + 2;
-                const rectY = seg.y * CELL_SIZE + 2;
-                const rectW = CELL_SIZE - 4, rectH = CELL_SIZE - 4;
-                const isHead = i === snake.length - 1;
-                ctx.fillStyle = isHead ? BUAA_LIGHT_BLUE : BUAA_BLUE;
-                ctx.beginPath();
-                ctx.roundRect(rectX, rectY, rectW, rectH, 5);
-                ctx.fill();
-                if (isHead) {
-                    ctx.strokeStyle = WHITE;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                }
-                if (i % 2 === 0) {
-                    ctx.fillStyle = WHITE;
-                    ctx.beginPath();
-                    ctx.arc(seg.x * CELL_SIZE + CELL_SIZE/2, seg.y * CELL_SIZE + CELL_SIZE/2, 2, 0, Math.PI*2);
-                    ctx.fill();
-                }
-            });
-        }
-
-        function drawFoodItem() {
-            const {x, y, type, data} = food;
-            const cx = x * CELL_SIZE + CELL_SIZE/2;
-            const cy = y * CELL_SIZE + CELL_SIZE/2;
-            if (type === 'airplane') {
-                drawAirplane(cx, cy, CELL_SIZE, data);
-            } else {
-                const rect = [x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE];
-                ctx.fillStyle = BUAA_BLUE;
-                ctx.fillRect(...rect);
-                ctx.fillStyle = WHITE;
-                ctx.font = 'bold 20px "Microsoft YaHei"';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(data, cx, cy);
-            }
-        }
-
-        function drawScore() {
-            ctx.fillStyle = WHITE;
-            ctx.font = '20px "Microsoft YaHei"';
-            ctx.textAlign = 'left';
-            ctx.fillText(`得分: ${score}`, 10, 30);
-            ctx.fillStyle = '#ffd700';
-            ctx.fillText(`最高分: ${highScore}`, 10, 60);
-            ctx.textAlign = 'right';
-            ctx.fillStyle = WHITE;
-            ctx.fillText('德才兼备 知行合一', CANVAS_SIZE - 20, 30);
-        }
-
-        function drawMessages() {
-            if (showAirpowerMessage) {
-                const msg = currentMessage;
-                ctx.font = '18px "Microsoft YaHei"';
-                const tw = ctx.measureText(msg).width;
-                const bgX = CANVAS_SIZE/2 - tw/2 - 10;
-                const bgY = CANVAS_SIZE/2 - 50;
-                ctx.fillStyle = 'rgba(0,0,0,0.8)';
-                ctx.beginPath();
-                ctx.roundRect(bgX, bgY, tw + 20, 30, 8);
-                ctx.fill();
-                ctx.fillStyle = '#ffff00';
-                ctx.textAlign = 'center';
-                ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE/2 - 35);
-            }
-            if (showAwesome) {
-                const msg = '北航牛逼！';
-                ctx.font = 'bold 20px "Microsoft YaHei"';
-                const tw = ctx.measureText(msg).width;
-                const bgX = CANVAS_SIZE/2 - tw/2 - 10;
-                const bgY = CANVAS_SIZE - 50;
-                ctx.fillStyle = 'rgba(0,0,0,0.8)';
-                ctx.beginPath();
-                ctx.roundRect(bgX, bgY, tw + 20, 30, 8);
-                ctx.fill();
-                ctx.fillStyle = '#ffff00';
-                ctx.textAlign = 'center';
-                ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE - 35);
-            }
-            if (showPowerupMsg) {
-                const msg = powerupMsgText;
-                ctx.font = '18px "Microsoft YaHei"';
-                const tw = ctx.measureText(msg).width;
-                const bgX = CANVAS_SIZE/2 - tw/2 - 10;
-                const bgY = CANVAS_SIZE - 90;
-                ctx.fillStyle = 'rgba(0,0,0,0.8)';
-                ctx.beginPath();
-                ctx.roundRect(bgX, bgY, tw + 20, 30, 8);
-                ctx.fill();
-                ctx.fillStyle = '#ffff00';
-                ctx.textAlign = 'center';
-                ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE - 75);
-            }
-            if (showAchieveMsg) {
-                const msg = achieveMsgText;
-                ctx.font = '18px "Microsoft YaHei"';
-                const tw = ctx.measureText(msg).width;
-                const bgX = CANVAS_SIZE/2 - tw/2 - 10;
-                const bgY = CANVAS_SIZE - 130;
-                ctx.fillStyle = 'rgba(0,0,0,0.8)';
-                ctx.beginPath();
-                ctx.roundRect(bgX, bgY, tw + 20, 30, 8);
-                ctx.fill();
-                ctx.fillStyle = '#ffd700';
-                ctx.textAlign = 'center';
-                ctx.fillText(msg, CANVAS_SIZE/2, CANVAS_SIZE - 115);
-            }
-        }
-
-        function drawGameOverScreen() {
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            const title = victory ? '保研成功！' : '游戏结束';
-            ctx.fillStyle = victory ? '#ffd700' : WHITE;
-            ctx.font = '30px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText(title, CANVAS_SIZE/2, CANVAS_SIZE/2 - 40);
-            ctx.font = '18px "Microsoft YaHei"';
-            ctx.fillText('按空格键重新开始', CANVAS_SIZE/2, CANVAS_SIZE/2);
-
-            // 统计
-            let statY = CANVAS_SIZE/2 + 40;
-            const stats = [
-                `吃掉飞机：${eatenAirplane} 个`,
-                `吃掉大学：${eatenUni} 个`,
-                `触发彩蛋：${triggeredMessages.size} 条`,
-                `拾取道具：${eatenPowerups.size} 种`,
-            ];
-            ctx.font = '16px "Microsoft YaHei"';
-            ctx.fillStyle = WHITE;
-            stats.forEach(line => {
-                ctx.fillText(line, CANVAS_SIZE/2, statY);
-                statY += 25;
-            });
-
-            // 成就
-            if (unlockedCount > 0) {
-                statY += 10;
-                const achList = Object.keys(ACHIEVEMENTS_DEF).filter(name => achievements[name]);
-                ctx.fillStyle = '#ffd700';
-                achList.forEach(name => {
-                    ctx.fillText(`🏆 ${name}`, CANVAS_SIZE/2, statY);
-                    statY += 25;
-                });
-            }
-        }
-
-        function drawPause() {
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            ctx.fillStyle = WHITE;
-            ctx.font = '30px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText('暂停中...', CANVAS_SIZE/2, CANVAS_SIZE/2);
-        }
-
-        function drawMenu() {
-            ctx.fillStyle = BLACK;
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            ctx.fillStyle = BUAA_LIGHT_BLUE;
-            ctx.font = '36px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText('北航贪吃蛇', CANVAS_SIZE/2, 150);
-            ctx.fillStyle = WHITE;
-            ctx.font = '24px "Microsoft YaHei"';
-            ctx.fillText('BUAA Snake', CANVAS_SIZE/2, 200);
-
-            menuOptions.forEach((opt, i) => {
-                const color = (i === menuSelected) ? '#ffff00' : WHITE;
-                const prefix = (i === menuSelected) ? '> ' : '  ';
-                ctx.fillStyle = color;
-                ctx.fillText(prefix + opt, CANVAS_SIZE/2, 350 + i * 60);
-            });
-
-            ctx.fillStyle = GRAY;
-            ctx.font = '18px "Microsoft YaHei"';
-            ctx.fillText('↑↓ 选择  回车确认', CANVAS_SIZE/2, CANVAS_SIZE - 80);
-            ctx.fillStyle = '#ffd700';
-            ctx.fillText(`最高分: ${highScore}`, CANVAS_SIZE/2, CANVAS_SIZE - 130);
-        }
-
-        function drawInstructions() {
-            ctx.fillStyle = BLACK;
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            const lines = [
-                '操作说明：',
-                '方向键或WASD - 控制蛇移动',
-                'P键 - 暂停/继续',
-                'ESC - 返回主菜单',
-                '',
-                '食物分为两种：',
-                '彩色小飞机 - 普通加分',
-                '大学简称 - 加分并显示“北航牛逼！”',
-                '',
-                '道具：蓝色书(航概+3分)、黄色书(数分减速)',
-                '绿色标志(TD线护盾)、金色奖杯(冯如杯直接胜利)',
-                '每吃5个食物触发航空知识彩蛋',
-                '撞墙、撞障碍物或撞到自己则游戏结束',
-            ];
-            ctx.fillStyle = WHITE;
-            ctx.font = '18px "Microsoft YaHei"';
-            ctx.textAlign = 'left';
-            lines.forEach((line, i) => {
-                ctx.fillText(line, 100, 100 + i * 35);
-            });
-            ctx.fillStyle = GRAY;
-            ctx.textAlign = 'center';
-            ctx.fillText('按 ESC 返回菜单', CANVAS_SIZE/2, CANVAS_SIZE - 60);
-        }
-
-        function drawAchievementsView() {
-            ctx.fillStyle = BLACK;
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            ctx.fillStyle = BUAA_LIGHT_BLUE;
-            ctx.font = '30px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText('成就列表', CANVAS_SIZE/2, 80);
-
-            let y = 150;
-            for (let name in ACHIEVEMENTS_DEF) {
-                const unlocked = achievements[name] || false;
-                const status = unlocked ? '已解锁' : '未解锁';
-                const color = unlocked ? '#ffd700' : GRAY;
-                ctx.fillStyle = color;
-                ctx.font = '20px "Microsoft YaHei"';
-                ctx.textAlign = 'left';
-                ctx.fillText(`${name}  -  ${status}`, 100, y);
-                ctx.fillStyle = WHITE;
-                ctx.font = '16px "Microsoft YaHei"';
-                ctx.fillText(ACHIEVEMENTS_DEF[name], 120, y + 25);
-                y += 60;
-            }
-            ctx.fillStyle = GRAY;
-            ctx.font = '18px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText('按 ESC 返回菜单', CANVAS_SIZE/2, CANVAS_SIZE - 60);
-        }
-
-        function drawDifficultyMenu() {
-            ctx.fillStyle = BLACK;
-            ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            ctx.fillStyle = BUAA_LIGHT_BLUE;
-            ctx.font = '30px "Microsoft YaHei"';
-            ctx.textAlign = 'center';
-            ctx.fillText('选择难度', CANVAS_SIZE/2, 150);
-
-            difficultyOptions.forEach((opt, i) => {
-                const color = (i === difficultySelected) ? '#ffff00' : WHITE;
-                const prefix = (i === difficultySelected) ? '> ' : '  ';
-                ctx.fillStyle = color;
-                ctx.font = '24px "Microsoft YaHei"';
-                ctx.fillText(prefix + opt, CANVAS_SIZE/2, 300 + i * 60);
-            });
-
-            ctx.fillStyle = GRAY;
-            ctx.font = '18px "Microsoft YaHei"';
-            ctx.fillText('↑↓ 选择  回车确认  ESC返回', CANVAS_SIZE/2, CANVAS_SIZE - 80);
-        }
-
-        function render() {
-            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-            if (gameState === 'menu') drawMenu();
-            else if (gameState === 'instructions') drawInstructions();
-            else if (gameState === 'achievements_view') drawAchievementsView();
-            else if (gameState === 'difficulty_menu') drawDifficultyMenu();
-            else if (gameState === 'playing') {
-                ctx.fillStyle = BLACK;
-                ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-                drawGrid();
-                drawObstacles();
-                drawPowerupItem();
-                drawSnake();
-                drawFoodItem();
-                drawScore();
-                drawMessages();
-                if (paused) drawPause();
-                if (gameOver) drawGameOverScreen();
-            }
-        }
-
-        // ---------- 事件处理 ----------
-        function handleKey(e) {
-            const key = e.key;
+    // ---------- 触摸控制 ----------
+    document.querySelectorAll('.control-btn').forEach(btn => {
+        const handler = (e) => {
             e.preventDefault();
-            if (gameState === 'menu') {
-                if (key === 'ArrowUp' || key === 'w' || key === 'W') menuSelected = (menuSelected - 1 + menuOptions.length) % menuOptions.length;
-                else if (key === 'ArrowDown' || key === 's' || key === 'S') menuSelected = (menuSelected + 1) % menuOptions.length;
-                else if (key === 'Enter' || key === ' ') {
-                    if (menuSelected === 0) { gameState = 'difficulty_menu'; difficultySelected = 1; }
-                    else if (menuSelected === 1) gameState = 'instructions';
-                    else if (menuSelected === 2) gameState = 'achievements_view';
-                    else if (menuSelected === 3) window.close();
-                }
-            } else if (gameState === 'instructions' || gameState === 'achievements_view') {
-                if (key === 'Escape' || key === 'Enter') gameState = 'menu';
-            } else if (gameState === 'difficulty_menu') {
-                if (key === 'ArrowUp' || key === 'w' || key === 'W') difficultySelected = (difficultySelected - 1 + difficultyOptions.length) % difficultyOptions.length;
-                else if (key === 'ArrowDown' || key === 's' || key === 'S') difficultySelected = (difficultySelected + 1) % difficultyOptions.length;
-                else if (key === 'Enter' || key === ' ') {
-                    if (difficultySelected === 0) difficulty = 'easy';
-                    else if (difficultySelected === 1) difficulty = 'normal';
-                    else difficulty = 'hell';
-                    resetGame();
-                    gameState = 'playing';
-                } else if (key === 'Escape') gameState = 'menu';
-            } else if (gameState === 'playing') {
-                if (gameOver) {
-                    if (key === ' ') {
-                        resetGame();
-                        gameOver = false;
-                        victory = false;
-                    }
-                    return;
-                }
-                if (key === 'p' || key === 'P') { paused = !paused; return; }
-                if (paused) return;
-                switch (key) {
-                    case 'ArrowUp': case 'w': case 'W': if (direction !== DOWN) nextDirection = UP; break;
-                    case 'ArrowDown': case 's': case 'S': if (direction !== UP) nextDirection = DOWN; break;
-                    case 'ArrowLeft': case 'a': case 'A': if (direction !== RIGHT) nextDirection = LEFT; break;
-                    case 'ArrowRight': case 'd': case 'D': if (direction !== LEFT) nextDirection = RIGHT; break;
-                    case 'Escape': gameState = 'menu'; paused = false; break;
-                }
+            if(gameState!=='playing'||gameOver||paused) return;
+            const dir = btn.dataset.dir;
+            if(dir==='up' && direction!==DOWN) nextDirection=UP;
+            else if(dir==='down' && direction!==UP) nextDirection=DOWN;
+            else if(dir==='left' && direction!==RIGHT) nextDirection=LEFT;
+            else if(dir==='right' && direction!==LEFT) nextDirection=RIGHT;
+        };
+        btn.addEventListener('touchstart', handler);
+        btn.addEventListener('mousedown', handler);
+    });
+
+    // 键盘控制
+    function handleKey(e) {
+        const key = e.key; e.preventDefault();
+        if(gameState==='menu') {
+            if(key==='ArrowUp'||key==='w'||key==='W') menuSelected = (menuSelected-1+menuOptions.length)%menuOptions.length;
+            else if(key==='ArrowDown'||key==='s'||key==='S') menuSelected = (menuSelected+1)%menuOptions.length;
+            else if(key==='Enter'||key===' ') {
+                if(menuSelected===0) { gameState='difficulty_menu'; difficultySelected=1; }
+                else if(menuSelected===1) gameState='instructions';
+                else if(menuSelected===2) gameState='achievements_view';
+                else if(menuSelected===3) window.close();
+            }
+        } else if(gameState==='instructions'||gameState==='achievements_view') {
+            if(key==='Escape'||key==='Enter') gameState='menu';
+        } else if(gameState==='difficulty_menu') {
+            if(key==='ArrowUp'||key==='w'||key==='W') difficultySelected = (difficultySelected-1+difficultyOptions.length)%difficultyOptions.length;
+            else if(key==='ArrowDown'||key==='s'||key==='S') difficultySelected = (difficultySelected+1)%difficultyOptions.length;
+            else if(key==='Enter'||key===' ') {
+                if(difficultySelected===0) difficulty='easy';
+                else if(difficultySelected===1) difficulty='normal';
+                else difficulty='hell';
+                resetGame(); gameState='playing';
+            } else if(key==='Escape') gameState='menu';
+        } else if(gameState==='playing') {
+            if(gameOver) { if(key===' '){ resetGame(); gameOver=false; victory=false; } return; }
+            if(key==='p'||key==='P') { paused=!paused; return; }
+            if(paused) return;
+            switch(key) {
+                case 'ArrowUp': case 'w': case 'W': if(direction!==DOWN) nextDirection=UP; break;
+                case 'ArrowDown': case 's': case 'S': if(direction!==UP) nextDirection=DOWN; break;
+                case 'ArrowLeft': case 'a': case 'A': if(direction!==RIGHT) nextDirection=LEFT; break;
+                case 'ArrowRight': case 'd': case 'D': if(direction!==LEFT) nextDirection=RIGHT; break;
+                case 'Escape': gameState='menu'; paused=false; break;
             }
         }
+    }
+    document.addEventListener('keydown', handleKey);
 
-        // ---------- 初始化与循环 ----------
-        function init() {
-            highScore = loadHighScore();
-            for (let name in ACHIEVEMENTS_DEF) achievements[name] = false;
-            resetGame();
-            gameState = 'menu';
-        }
-
-        function gameLoop() {
-            update();
-            render();
-            setTimeout(gameLoop, 1000 / currentFps);
-        }
-
-        document.addEventListener('keydown', handleKey);
-        init();
-        gameLoop();
-    })();
+    // 初始化
+    function init() {
+        highScore = loadHighScore();
+        for(let name in ACHIEVEMENTS_DEF) achievements[name] = false;
+        resetGame();
+        gameState = 'menu';
+    }
+    function gameLoop() { update(); render(); setTimeout(gameLoop, 1000/currentFps); }
+    init();
+    gameLoop();
+})();
 </script>
 </body>
 </html>
