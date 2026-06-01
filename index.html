@@ -247,7 +247,7 @@
         while(!placed) {
             const x = Math.floor(Math.random()*CELL_NUMBER);
             const y = Math.floor(Math.random()*CELL_NUMBER);
-            if(!snake.some(s=>s.x===x&&s.y===y) && !(food.x===x&&food.y===y) && !obstacles.some(o=>o.x===x&&o.y===oy) && (!powerup || (powerup.x!==x || powerup.y!==y))) {
+            if(!snake.some(s=>s.x===x&&s.y===y) && !(food.x===x&&food.y===y) && !obstacles.some(o=>o.x===x&&o.y===y) && (!powerup || (powerup.x!==x || powerup.y!==y))) {
                 powerup = {x, y, type}; powerupDuration = 100; placed = true;
             }
         }
@@ -426,17 +426,18 @@
     }
 
     // ---------- 触摸控制 ----------
-    document.querySelectorAll('.control-btn').forEach(btn => {
+       document.querySelectorAll('.control-btn').forEach(btn => {
         const handler = (e) => {
             e.preventDefault();
-            if(gameState!=='playing'||gameOver||paused) return;
+            if(gameState !== 'playing' || gameOver || paused) return;
             const dir = btn.dataset.dir;
-            if(dir==='up' && direction!==DOWN) nextDirection=UP;
-            else if(dir==='down' && direction!==UP) nextDirection=DOWN;
-            else if(dir==='left' && direction!==RIGHT) nextDirection=LEFT;
-            else if(dir==='right' && direction!==LEFT) nextDirection=RIGHT;
+            if (dir === 'up' && direction !== DOWN) nextDirection = UP;
+            else if (dir === 'down' && direction !== UP) nextDirection = DOWN;
+            else if (dir === 'left' && direction !== RIGHT) nextDirection = LEFT;
+            else if (dir === 'right' && direction !== LEFT) nextDirection = RIGHT;
         };
-        btn.addEventListener('touchstart', handler);
+        // 必须加上 { passive: false }，否则移动端 preventDefault 会失效
+        btn.addEventListener('touchstart', handler, { passive: false });
         btn.addEventListener('mousedown', handler);
     });
 
